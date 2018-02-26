@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "./node_modules/.bin/mocha -r ts-node/register src/**/*.spec.ts",
     "start": "npm run build:live",
     "build:live": "nodemon --exec ts-node --type-check -r tsconfig-paths/register ./src/index.ts"
   },
@@ -12,9 +12,13 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@types/chai": "^4.1.2",
+    "@types/mocha": "^2.2.48",
     "@types/node": "^8.9.1",
     "@types/winston": "^2.3.7",
     "@types/ws": "^4.0.0",
+    "chai": "^4.1.2",
+    "mocha": "^5.0.1",
     "nodemon": "^1.14.12",
     "ts-node": "^4.1.0",
     "tsconfig-paths": "^3.1.1",
