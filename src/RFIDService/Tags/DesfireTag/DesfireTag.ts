@@ -2,6 +2,7 @@ import { Tag, TagInfo, TagTransceiveFn } from 'RFIDService/Tag';
 import { Log } from 'Utils/Log';
 import * as crypto from 'crypto';
 import { KeyProvider } from 'RFIDService/KeyProvider';
+import { DesfireKey, DesfireKeyAES, DesfireKey2K3DES, DesfireKey2K3DESDefault, DesfireKey3K3DES } from './DesfireKey';
 
 // Unique desfire AID used in select file ISO7816-4 instruction
 const DESFIRE_AID = Buffer.from('D2760000850100', 'hex');
@@ -12,9 +13,7 @@ const DF_STATUS_ADDITIONAL_FRAME = 0xAF;
 
 // Instructions
 const DF_INS_ADDITIONAL_FRAME = 0xAF;
-const DFEV1_INS_AUTHENTICATE_AES = 0xAA;
-
-const testkey = Buffer.from('00102030405060708090A0B0B0A09080', 'hex');
+const DF_INS_CHANGE_KEY = 0xC4;
 
 function RotateBuffer(buf: Buffer)
 {
@@ -29,27 +28,10 @@ function getRandomIntInclusive(min: number, max: number) {
 
 class DesfireTag extends Tag
 {
-    IV: Buffer = Buffer.alloc(16);
     Connected: boolean = false;
-
-    AESEncrypt(plaintext: Buffer, key: Buffer) {
-        var cipher = crypto.createCipheriv('aes-128-cbc', key, this.IV);
-        cipher.setAutoPadding(false);
-        var enc = cipher.update(plaintext);
-        var final = cipher.final();
-        enc = Buffer.concat([enc, final]);
-        this.IV = enc.slice(enc.length-16, enc.length);
-        return enc;
-    }
-     
-    AESDecrypt(ciphertext: Buffer, key: Buffer) {
-        var decipher = crypto.createDecipheriv('aes-128-cbc', key, this.IV);
-        decipher.setAutoPadding(false);
-        var dec = decipher.update(ciphertext);
-        var final = decipher.final();
-        this.IV = ciphertext.slice(ciphertext.length-16, ciphertext.length);
-        return Buffer.concat([dec, final]);
-    }
+    AuthenticatedKeyNo: number = -1;
+    SessionKey: DesfireKey = new DesfireKey2K3DESDefault();
+    SelectedApplication: number = 0;
 
     static Identify(info: TagInfo)
     {
@@ -114,10 +96,10 @@ class DesfireTag extends Tag
         return true;
     }
 
-    async DesfireAuthenticate(key: Buffer, keyno: number = 0)
+    async DesfireAuthenticate(key: DesfireKey, keyno: number = 0)
     {
         // Reset IV
-        this.IV.fill(0x00);
+        key.ResetIV();
 
         // Make sure tag is connected
         if (!this.Connected)
@@ -125,57 +107,135 @@ class DesfireTag extends Tag
                 return false;
     
         // write keyno as payload
-        var AuthBuf = Buffer.alloc(1);
+        let AuthBuf = Buffer.alloc(1);
         AuthBuf.writeUInt8(keyno, 0);
 
         // Initiate auth with tag and receive RndB (encrypted)
-        var RndBEnc;
         try {
-            RndBEnc = await this.DesfireTransceive(DFEV1_INS_AUTHENTICATE_AES, AuthBuf);
+            var RndBEnc = await this.DesfireTransceive(key.GetAuthCmd(), AuthBuf);
         } catch (e) {
             Log.error("DesfireTag::Authenticate(): Authentication request failed", {e});
             return false;
         }
 
         // Decrypt RndB
-        const RndB = this.AESDecrypt(RndBEnc, key);
+        const RndB = key.Decrypt(RndBEnc);
 
         // Rotate RndB
         const RndBRot = RotateBuffer(RndB);
 
         // Generate RndA
-        var RndA = new Buffer(RndB.length);
+        let RndA = new Buffer(RndB.length);
         for (var i = 0; i < RndA.length; ++i)
             RndA[i] = getRandomIntInclusive(0, 255);
         
         // Build authentication token
-        var Token = Buffer.alloc(RndBRot.length + RndA.length);
+        let Token = Buffer.alloc(RndBRot.length + RndA.length);
         RndA.copy(Token, 0);
         RndBRot.copy(Token, RndA.length);
 
         // Encrypt authentication token
-        const TokenEnc = this.AESEncrypt(Token, key);
+        const TokenEnc = key.Encrypt(Token);
 
         // Continue auth by sending token and receiving RndARot (encrypted)
-        var RndARotEnc;
         try {
-            RndARotEnc = await this.DesfireTransceive(DF_INS_ADDITIONAL_FRAME, TokenEnc);
+            var RndARotEnc = await this.DesfireTransceive(DF_INS_ADDITIONAL_FRAME, TokenEnc);
         } catch (e) {
             Log.error("DesfireTag::Authenticate(): Authentication with token failed", {e});
             return false;
         }
 
         // Decrypt RndARot
-        const RndARot = this.AESDecrypt(RndARotEnc, key);
+        const RndARot = key.Decrypt(RndARotEnc);
 
         // Build local RndARot
         const RndARotLocal = RotateBuffer(RndA);
 
         // Check if buffers match
         if (!RndARot.compare(RndARotLocal))
+        {
+            this.AuthenticatedKeyNo = keyno;
+            this.SessionKey = key.GetSessionKey(RndA, RndB);
+            Log.debug("DesfireTag::Authenticate(): Created session key", {
+                RndA: RndA.toString('hex'),
+                RndB: RndB.toString('hex'),
+                SessionKey: this.SessionKey.Get().toString('hex'),
+            });
+
             return true;
+        }
         else
+        {
+            Log.error("DesfireTag::Authenticate(): Buffers did not match", {
+                RndARot: RndARot.toString('hex'),
+                RndARotLocal: RndARotLocal.toString('hex')
+            });
+            this.AuthenticatedKeyNo = -1;
+
             return false;
+        }
+    }
+
+    async ChangeKey(keyno: number, key: DesfireKey)
+    {
+        keyno &= 0x0F;
+
+        if (this.AuthenticatedKeyNo != keyno)
+        {
+            Log.error("DesfireTag::ChnageKey(): Authenticated key no does not match", {
+                authKeyno: this.AuthenticatedKeyNo,
+                keyno: keyno
+            });
+
+            return false;
+        }
+
+        // Key type can only be changed on master key
+        if (this.SelectedApplication == 0)
+        {
+            if (key instanceof DesfireKeyAES)
+                keyno |= 0x80;
+        }
+
+        let cryptogram = Buffer.alloc(200);
+        let i = 0;
+
+        // Append key. DES keys are appened twice
+        i += key.Get().copy(cryptogram, i);
+
+        // Aes key has version
+        if (key instanceof DesfireKeyAES)
+            i = cryptogram.writeUInt8(key.Version(), i);
+
+        // Calculate CRC
+        let crc = 0xFFFFFFFF;
+        crc = DesfireTag.DesfireCRC(crc, DF_INS_CHANGE_KEY);
+        crc = DesfireTag.DesfireCRC(crc, keyno);
+
+        for (let x = 0; x < i; ++x)
+            crc = DesfireTag.DesfireCRC(crc, cryptogram[x]);
+
+        i = cryptogram.writeInt32LE(crc, i);
+
+        // Pad to key length blocks
+        while (i % key.BlockLength() != 0)
+            i = cryptogram.writeUInt8(0x00, i);
+
+        // Encrypt
+        const cryptogramEnc = this.SessionKey.Encrypt(cryptogram.slice(0, i));
+
+        let buf = Buffer.alloc(i+1);
+        buf.writeUInt8(keyno, 0);
+        cryptogramEnc.copy(buf, 1);
+
+        try {
+            await this.DesfireTransceive(DF_INS_CHANGE_KEY, buf);
+        } catch (e) {
+            Log.error("DesfireTag::ChangeKey(): Failed", {e});
+            return false;
+        }
+
+        return true;
     }
 
     async Authenticate(keyProvider: KeyProvider): Promise<boolean>
@@ -189,10 +249,42 @@ class DesfireTag extends Tag
         this.info.ATS.copy(OtherInfo, 4 + this.info.UID.length);
 
         // Get 16 byte key (AES128) from keyProvider
-        let key = keyProvider.GetKey(16, OtherInfo);
+        let key = new DesfireKeyAES(keyProvider.GetKey(16, OtherInfo));
+        Log.debug("DesfireTag::Authenticate(): Generated key", {key: key.Get().toString('hex')});
 
         // Authenticate key 0
-        return this.DesfireAuthenticate(key, 0);
+        if (await this.DesfireAuthenticate(key, 0))
+            return true;
+        
+        // Try authenticating with default key and change it
+        Log.debug("DesfireTag::Authenticate(): Trying to change default key");
+
+        const defaultkey =  new DesfireKey2K3DESDefault();
+
+        if (!await this.DesfireAuthenticate(defaultkey, 0))
+            return false;
+
+        if (!await this.ChangeKey(0, key))
+            return false;
+
+        return true;
+    }
+
+    static DesfireCRC(crc: number, value: number): number
+    {
+        // x32 + x26 + x23 + x22 + x16 + x12 + x11 + x10 + x8 + x7 + x5 + x4 + x2 + x + 1
+        let poly = 0xEDB88320;
+
+        crc ^= value;
+        for (let current_bit = 7; current_bit >= 0; current_bit--)
+        {
+            let bit_out = crc & 0x00000001;
+            crc >>>= 1;
+            if (bit_out)
+                crc ^= poly;
+        }
+
+        return crc;
     }
 }
 

@@ -1,8 +1,10 @@
 import { EventInterface } from './EventInterface';
 import { DataInterface } from './DataInterface';
 import { RFIDService } from './RFIDService/RFIDService';
-import { KeyProvider, ConstantKeyProvider } from './RFIDService/KeyProvider';
+import { KeyProvider, HKDF } from './RFIDService/KeyProvider';
 import { Log } from 'Utils/Log';
+
+let IKM = Buffer.from('00102030405060708090A0B0B0A09080', 'hex');
 
 class ServiceManager
 {
@@ -16,7 +18,7 @@ class ServiceManager
         this.dataInterface = dataInterface;
         this.eventInterface = new EventInterface(dataInterface);
 
-        this.keyProvider = new ConstantKeyProvider(Buffer.from('00102030405060708090A0B0B0A09080', 'hex'));
+        this.keyProvider = new HKDF(IKM, 'sha256', Buffer.from('RFIDService'));
 
         this.rfidService = new RFIDService(this.eventInterface, this.keyProvider);
 

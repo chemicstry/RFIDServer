@@ -91,7 +91,7 @@ class HKDF implements KeyProvider
         this.salt = salt || this.Zeros(this.hashlen);
 
         // Erkact primary keying material (PRK)
-        this.Extract();
+        this.PRK = this.Extract();
     }
 
     Zeros(len: number): Buffer
@@ -101,11 +101,11 @@ class HKDF implements KeyProvider
         return buf;
     }
 
-    Extract(): void
+    Extract(): Buffer
     {
         let hmac = crypto.createHmac(this.hashalgo, this.salt);
         hmac.update(this.IKM);
-        this.PRK = hmac.digest();
+        return hmac.digest();
     }
 
     Expand(info: Buffer, size: number): Buffer

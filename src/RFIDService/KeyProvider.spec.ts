@@ -1,9 +1,19 @@
 import 'mocha';
 import { expect } from 'chai';
-import { HKDF } from './KeyProvider';
+import { ConstantKeyProvider, HKDF } from './KeyProvider';
+
+describe('ConstantKeyProvider', () => {
+    it('Should provide a valid key', () => {
+        let key = Buffer.from('00102030405060708090A0B0B0A09080', 'hex');
+        let keyProvider = new ConstantKeyProvider(key);
+        let result = keyProvider.GetKey(key.length, Buffer.alloc(0));
+
+        expect(result).to.deep.equal(key);
+    })
+});
 
 describe('HKDF KeyProvider', () => {
-    it('Should provide valid OKM', () => {
+    it('Should provide a valid OKM', () => {
         // Data provided by https://tools.ietf.org/html/rfc5869
         let IKM = Buffer.from('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b', 'hex');
         let salt = Buffer.from('000102030405060708090a0b0c', 'hex');
