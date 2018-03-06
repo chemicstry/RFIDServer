@@ -21,52 +21,6 @@ class ConstantKeyProvider implements KeyProvider
     }
 }
 
-// Implements Single-step KDF based on NIST SP 800-56A Rev. 2 specification (chapter 5.8.1)
-class SingleStepKDF implements KeyProvider
-{
-    Z: Buffer;
-    hashalgo: string;
-    hashlen: number;
-
-    constructor(Z: Buffer, hashalgo: string = "sha256")
-    {
-        // set secret Z (master key)
-        this.Z = Z;
-
-        // Hashing algorithm
-        this.hashalgo = hashalgo;
-
-        // Hashing algorithm length
-        this.hashlen = crypto.createHash(this.hashalgo).digest().length;
-    }
-
-    GetKey(keydatalen: number, OtherInfo: Buffer): Buffer
-    {
-        let reps = keydatalen / this.hashlen;
-
-        let K = Buffer.alloc(Math.ceil(reps)*this.hashlen);
-
-        for (var counter = 1; counter <= reps; ++counter)
-        {
-            // uint32 counter + Z + Otherinfo
-            let buf = Buffer.alloc(4 + this.Z.length + OtherInfo.length);
-
-            // Build hash data
-            buf.writeUInt32BE(counter, 0);
-            this.Z.copy(buf, 4);
-            OtherInfo.copy(buf, 4 + this.Z.length);
-
-            // Calculate hash
-            let hash = crypto.createHash(this.hashalgo);
-            hash.update(buf);
-            hash.digest().copy(K, (counter-1)*this.hashlen);
-        }
-
-        // Truncate if reps was non integer
-        return K.slice(0, keydatalen);
-    }
-}
-
 // Defined in RFC5869 https://tools.ietf.org/html/rfc5869
 class HKDF implements KeyProvider
 {
@@ -138,6 +92,5 @@ class HKDF implements KeyProvider
 export {
     KeyProvider,
     ConstantKeyProvider,
-    SingleStepKDF,
     HKDF
 };
