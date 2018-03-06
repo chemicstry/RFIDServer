@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "./node_modules/.bin/mocha -r ts-node/register -r tsconfig-paths/register src/**/*.spec.ts",
+    "test": "./node_modules/.bin/mocha -r ts-node/register -r tsconfig-paths/register --recursive ./**/*.spec.ts",
     "start": "npm run build:live",
     "build:live": "nodemon --exec ts-node --type-check -r tsconfig-paths/register ./src/index.ts"
   },
