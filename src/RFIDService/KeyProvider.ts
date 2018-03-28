@@ -44,7 +44,7 @@ class HKDF implements KeyProvider
         // Salt
         this.salt = salt || this.Zeros(this.hashlen);
 
-        // Erkact primary keying material (PRK)
+        // Extract primary keying material (PRK)
         this.PRK = this.Extract();
     }
 
